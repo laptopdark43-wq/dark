@@ -6,7 +6,7 @@ import requests
 
 # ✅ Setup logs correctly
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(_name)  # ✅ Fix: __name_ (double underscores)
+logger = logging.getLogger(__name__)  # ✅ Fix: __name_ (double underscores)
 
 # ✅ Load tokens from environment
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
