@@ -60,6 +60,6 @@ async def main():
     await app.run_polling()
 
 # ✅ Correct entry point
-if _name_ == "_main":  # ✅ Fix: double underscores, not _name
+if __name__ == "__main__":  # ✅ Fix: double underscores, not _name
     import asyncio
     asyncio.run(main())
