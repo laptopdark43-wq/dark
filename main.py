@@ -9,9 +9,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(_name_)
 
 # Load tokens
-TELEGRAM_TOKEN = os.getenv("7208370023:AAEvk7C9sAqIgdNym9fFXmpZswYoXhvjqZE")
-GEMINI_API_KEY = os.getenv("AIzaSyCh8Hq3wAy2Y_FhKbJv-NjSniQJZWMMXxU")
-
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Gemini API request function
 def chat_with_gemini(prompt):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0:generateContent"
@@ -19,7 +18,7 @@ def chat_with_gemini(prompt):
         "Content-Type": "application/json"
     }
     params = {
-        "key": AIzaSyCh8Hq3wAy2Y_FhKbJv-NjSniQJZWMMXxU
+        "key": "GEMINI_API_KEY"
     }
     body = {
         "contents": [
