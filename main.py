@@ -2,10 +2,10 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
+from openai import OpenAI
 from flask import Flask
 import threading
-import json
+import asyncio
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
@@ -25,25 +25,27 @@ def health():
 class AanyaaBot:
     def __init__(self):
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+        self.a4f_api_key = os.getenv('A4F_API_KEY')
         
-        if not self.telegram_token or not self.gemini_api_key:
-            raise ValueError("Missing API keys")
+        if not self.telegram_token or not self.a4f_api_key:
+            raise ValueError("Missing API keys: TELEGRAM_BOT_TOKEN and A4F_API_KEY required")
         
-        genai.configure(api_key=self.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # Initialize OpenAI client with A4F API
+        self.client = OpenAI(
+            api_key=self.a4f_api_key,
+            base_url="https://api.a4f.co/v1"
+        )
         
-        # Enhanced memory system - stores last 10 chats per user (works in both private and group chats)
+        # Enhanced memory system - stores last 10 chats per user
         self.user_memory = {}
         
-        logger.info("Bot initialized successfully with enhanced memory system")
+        logger.info("Bot initialized successfully with OpenAI A4F API using Gemini 2.5 Flash")
     
     def add_to_memory(self, user_id: int, user_message: str, bot_response: str, user_name: str, chat_type: str, chat_title: str = None):
-        """Add conversation to user's memory (works for both private and group chats)"""
+        """Add conversation to user's memory"""
         if user_id not in self.user_memory:
             self.user_memory[user_id] = []
         
-        # Add new conversation with chat context
         conversation = {
             'timestamp': datetime.now().isoformat(),
             'user_name': user_name,
@@ -59,10 +61,10 @@ class AanyaaBot:
         if len(self.user_memory[user_id]) > 10:
             self.user_memory[user_id] = self.user_memory[user_id][-10:]
         
-        logger.info(f"Added conversation to memory for user {user_id} ({user_name}) in {chat_type}. Total conversations: {len(self.user_memory[user_id])}")
+        logger.info(f"Added conversation to memory for user {user_id} ({user_name})")
     
     def get_memory_context(self, user_id: int, user_name: str) -> str:
-        """Get memory context for the user (works across all chat types)"""
+        """Get memory context for the user"""
         if user_id not in self.user_memory or not self.user_memory[user_id]:
             return f"This is my first conversation with {user_name}."
         
@@ -96,6 +98,25 @@ class AanyaaBot:
         
         return None
     
+    async def get_openai_response(self, prompt: str) -> str:
+        """Get response from OpenAI A4F API using Gemini 2.5 Flash"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def sync_call():
+                completion = self.client.chat.completions.create(
+                    model="provider-6/gemini-2.5-flash",  # Updated model name
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                return completion.choices[0].message.content
+            
+            response = await loop.run_in_executor(None, sync_call)
+            return response
+            
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            return "I'm having trouble thinking right now. Try again in a moment! 😅"
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_name = update.effective_user.first_name or "friend"
         user_id = update.effective_user.id
@@ -109,7 +130,7 @@ class AanyaaBot:
         
         await update.message.reply_text(
             f"Hi {user_name}! I'm Aanyaa 🌸\n"
-            f"Your cute AI assistant with advanced memory!\n\n"
+            f"Your cute AI assistant powered by Gemini 2.5 Flash!\n\n"
             f"💕 **Private chats**: Just message me!\n"
             f"💕 **Groups**: Tag me @{context.bot.username or 'aanyaa'} or reply\n"
             f"🧠 **Memory**: I remember our last 10 chats in ALL locations!\n"
@@ -118,7 +139,7 @@ class AanyaaBot:
         )
     
     async def memory_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show user their conversation memory across all chats"""
+        """Show user their conversation memory"""
         user_id = update.effective_user.id
         user_name = update.effective_user.first_name or "friend"
         
@@ -145,7 +166,7 @@ class AanyaaBot:
         chat_title = update.message.chat.title if hasattr(update.message.chat, 'title') else None
         
         # Log the chat details
-        logger.info(f"Received message from {user_name} (ID: {user_id}) in {chat_type}: {chat_title or 'Private'}")
+        logger.info(f"Received message from {user_name} (ID: {user_id}) in {chat_type}")
         
         # Private chat - ALWAYS respond and remember
         if chat_type == 'private':
@@ -153,9 +174,9 @@ class AanyaaBot:
             await self.generate_response(update, user_message, user_name, user_id, chat_type, chat_title)
             return
         
-        # Group chat - only respond if tagged or replied to, but ALWAYS remember if responding
+        # Group chat - only respond if tagged or replied to
         if chat_type in ['group', 'supergroup']:
-            logger.info(f"Processing group chat message from {user_name} in {chat_title}")
+            logger.info(f"Processing group chat message from {user_name}")
             
             bot_username = context.bot.username
             should_respond = False
@@ -185,7 +206,6 @@ class AanyaaBot:
             special_response = self.check_special_responses(user_message, user_name)
             if special_response:
                 await update.message.reply_text(special_response)
-                # Add to memory
                 self.add_to_memory(user_id, user_message, special_response, user_name, chat_type, chat_title)
                 logger.info("Sent special response and added to memory")
                 return
@@ -209,10 +229,11 @@ IMPORTANT RESPONSE RULES:
 - Keep responses to 2-3 lines maximum unless user asks you to elaborate
 - Use casual phrases: "lol" for funny moments, "lmao" for very funny things
 - If someone is being rude or irritating, you can use "bkl" (but only if they're really annoying)
+- Use phrases like "soja lwle" for good night responses
+- Respond "Radhe Radhe" to "subh ratri"
 - Be sweet but not overly formal
 - Use emojis occasionally but don't overuse them
 - Remember our previous conversations and refer to them when relevant
-- You remember conversations from both private chats and group chats
 
 PERSONALITY:
 - Cute, friendly, and helpful
@@ -222,15 +243,16 @@ PERSONALITY:
 
 User {user_name} says: {user_message}
 
-Remember: Keep it short (2-3 lines) unless they ask for more details! Use your memory of our previous conversations when relevant."""
+Remember: Keep it short (2-3 lines) unless they ask for more details! Use your memory when relevant."""
             
-            logger.info(f"Generating response with memory context for {user_name}: {user_message[:50]}...")
-            response = self.model.generate_content(prompt)
+            logger.info(f"Generating Gemini 2.5 Flash response for {user_name}: {user_message[:50]}...")
             
-            if response.text:
-                await update.message.reply_text(response.text)
-                # Add to memory
-                self.add_to_memory(user_id, user_message, response.text, user_name, chat_type, chat_title)
+            # Get response from OpenAI A4F API using Gemini 2.5 Flash
+            response_text = await self.get_openai_response(prompt)
+            
+            if response_text and response_text.strip():
+                await update.message.reply_text(response_text)
+                self.add_to_memory(user_id, user_message, response_text, user_name, chat_type, chat_title)
                 logger.info(f"Response sent successfully and added to memory for {user_name}")
             else:
                 error_response = f"Sorry {user_name}! 😅 I didn't get that. Try again?"
@@ -249,7 +271,7 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         app_telegram.add_handler(CommandHandler("memory", self.memory_command))
         app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        logger.info("Starting enhanced Aanyaa bot with universal memory system...")
+        logger.info("Starting Aanyaa bot with Gemini 2.5 Flash via A4F API...")
         app_telegram.run_polling()
 
 def run_flask():
