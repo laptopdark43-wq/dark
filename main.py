@@ -66,10 +66,14 @@ class AanyaaBot:
         # Music system - stores playlists for each user
         self.user_playlists = {}
         
-        # Currently playing songs in groups
+        # Sequential playlist system
+        self.group_music_queue = {}  # Store music queues for each group
         self.group_current_song = {}
         
-        logger.info("✅ Bot initialized successfully with OpenAI A4F API and Enhanced Music System")
+        # Store bot application for later use in auto-play
+        self.app = None
+        
+        logger.info("✅ Bot initialized successfully with Sequential Playlist System")
     
     def add_to_memory(self, user_id: int, user_message: str, bot_response: str, user_name: str, chat_type: str, chat_title: str = None):
         """Add conversation to user's memory"""
@@ -146,6 +150,15 @@ class AanyaaBot:
                         'playlist_name': playlist_name
                     }
         
+        return None
+    
+    def find_playlist_by_name(self, user_playlists: Dict, query: str) -> Dict:
+        """Find playlist by name from user's playlists"""
+        query_lower = query.lower()
+        for playlist_name, playlist_data in user_playlists.items():
+            if (query_lower in playlist_name.lower() or 
+                playlist_name.lower() in query_lower):
+                return {'name': playlist_name, 'data': playlist_data}
         return None
     
     def detect_playlist_creation(self, message: str) -> Dict:
@@ -297,16 +310,19 @@ class AanyaaBot:
         
         await update.message.reply_text(
             f"Hi {user_name}! I'm Aanyaa 🌸\n"
-            f"Your cute AI assistant with music powers!\n\n"
+            f"Your cute AI assistant with sequential music powers!\n\n"
             f"💕 **Private chats**: Just message me!\n"
             f"💕 **Groups**: Tag me @{context.bot.username or 'aanyaa'} or reply\n"
             f"🧠 **Memory**: I remember our last 10 chats!\n"
-            f"🎵 **Music**: Create playlists & play songs!\n\n"
-            f"**Music Commands:**\n"
-            f"🎶 `/play song_name` - Play song (searches your playlists)\n"
-            f"🎵 `/playplaylist playlist_name` - Play entire playlist\n"
-            f"📋 `/playlists` - View your playlists\n"
-            f"🎼 `/mymusic` - Manage your music\n\n"
+            f"🎵 **Music**: Create & play playlists sequentially!\n\n"
+            f"**Sequential Music Commands:**\n"
+            f"🎶 `/play song_name` - Play specific song\n"
+            f"🎵 `/play playlist_name` - Play entire playlist sequentially\n"
+            f"⏭️ `/next` - Skip to next song\n"
+            f"⏹️ `/stop` - Stop current playlist\n"
+            f"📋 `/queue` - Show playing queue\n"
+            f"🎼 `/playlists` - View your playlists\n"
+            f"🎶 `/mymusic` - Manage your music\n\n"
             f"**Other Commands:**\n"
             f"🧠 `/memory` - View chat history\n"
             f"🧹 `/clear` - Clear memory\n\n"
@@ -317,8 +333,9 @@ class AanyaaBot:
             f"What's up? 😊"
         )
     
+    # Enhanced Sequential Playlist System
     async def play_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enhanced /play command that searches user playlists"""
+        """Enhanced /play command with automatic sequential playlist support"""
         user_name = update.effective_user.first_name or "friend"
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
@@ -327,137 +344,283 @@ class AanyaaBot:
         if update.message.chat.type == 'private':
             await update.message.reply_text(
                 f"Hey {user_name}! 🎵 The /play command works in groups only!\n"
-                f"Add me to a group and try `/play song_name` there! 😊"
+                f"Add me to a group and try `/play song_name` or `/play playlist_name` there! 😊"
             )
             return
         
-        # Get song name from command
+        # Get song/playlist name from command
         if context.args:
-            song_name = ' '.join(context.args).strip('"').strip("'")
+            query = ' '.join(context.args).strip('"').strip("'")
         else:
-            await update.message.reply_text(
-                f"Hey {user_name}! 🎵 Please tell me what to play!\n"
-                f"Use: `/play song_name` or `/play \"exact song name\"` 😊"
-            )
+            await self.show_play_help(update, user_name, user_id)
             return
         
-        # Search in user's playlists first
-        found_song = self.find_song_in_user_playlists(user_id, song_name)
-        
-        if found_song:
-            # Store currently playing song
-            self.group_current_song[chat_id] = {
-                'song': found_song['song_name'],
-                'playlist': found_song['playlist_name'],
-                'requested_by': user_name,
-                'user_id': user_id,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            await update.message.reply_text(
-                f"🎵 Now playing: **{found_song['song_name']}**\n"
-                f"📀 From playlist: *{found_song['playlist_name']}*\n"
-                f"🎤 Requested by: {user_name}\n"
-                f"🎶 Playing from your personal collection! lol 😊"
-            )
-        else:
-            # Play any song (not from playlist)
-            self.group_current_song[chat_id] = {
-                'song': song_name,
-                'playlist': 'General',
-                'requested_by': user_name,
-                'user_id': user_id,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            await update.message.reply_text(
-                f"🎵 Now playing: **{song_name}**\n"
-                f"🎤 Requested by: {user_name}\n"
-                f"🎶 Enjoy the music! 😊\n\n"
-                f"💡 *Tip: Create playlists in our private chat for easier access!*"
-            )
-        
-        logger.info(f"🎵 Playing song '{song_name}' in group {chat_id} requested by {user_name}")
-    
-    async def play_playlist_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Play entire playlists in groups"""
-        user_name = update.effective_user.first_name or "friend"
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
-        
-        # Check if in group
-        if update.message.chat.type == 'private':
-            await update.message.reply_text(
-                f"Hey {user_name}! 🎵 Playlist playing works in groups only!\n"
-                f"Use `/playplaylist playlist_name` in a group! 😊"
-            )
-            return
-        
-        # Get playlist name
-        if context.args:
-            playlist_name = ' '.join(context.args)
-        else:
-            # Show available playlists
-            user_playlists = self.get_user_playlists(user_id)
-            if user_playlists:
-                playlist_list = "\n".join([f"🎵 {name}" for name in user_playlists.keys()])
-                await update.message.reply_text(
-                    f"Hey {user_name}! 🎵 Which playlist would you like to play?\n\n"
-                    f"**Your playlists:**\n{playlist_list}\n\n"
-                    f"Use: `/playplaylist playlist_name`"
-                )
-            else:
-                await update.message.reply_text(
-                    f"Hey {user_name}! You don't have any playlists yet! 😅\n"
-                    f"Create some playlists in our private chat first! 🎵"
-                )
-            return
-        
-        # Find the playlist
+        # Check if it's a playlist request
         user_playlists = self.get_user_playlists(user_id)
-        found_playlist = None
+        found_playlist = self.find_playlist_by_name(user_playlists, query)
         
-        for plist_name, plist_data in user_playlists.items():
-            if playlist_name.lower() in plist_name.lower():
-                found_playlist = {'name': plist_name, 'data': plist_data}
-                break
+        if found_playlist:
+            # Play entire playlist sequentially
+            await self.play_playlist_sequentially(update, found_playlist, user_name, user_id, chat_id)
+        else:
+            # Try to find individual song in playlists
+            found_song = self.find_song_in_user_playlists(user_id, query)
+            if found_song:
+                await self.play_single_song_from_playlist(update, found_song, user_name, user_id, chat_id)
+            else:
+                await self.play_general_song(update, query, user_name, user_id, chat_id)
+    
+    async def play_playlist_sequentially(self, update: Update, playlist: Dict, user_name: str, user_id: int, chat_id: int):
+        """Play entire playlist one song at a time automatically"""
+        playlist_data = playlist['data']
+        songs = playlist_data['songs']
         
-        if not found_playlist:
+        if not songs:
             await update.message.reply_text(
-                f"Hey {user_name}! I couldn't find playlist '{playlist_name}' 😅\n"
-                f"Use `/playplaylist` to see your available playlists!"
-            )
-            return
-        
-        # Start playing playlist
-        playlist_data = found_playlist['data']
-        song_count = len(playlist_data['songs'])
-        
-        if song_count == 0:
-            await update.message.reply_text(
-                f"Hey {user_name}! Your '{found_playlist['name']}' playlist is empty! 😅\n"
+                f"Hey {user_name}! Your '{playlist['name']}' playlist is empty! 😅\n"
                 f"Add some songs to it first!"
             )
             return
         
-        # Store playlist info
+        # Initialize music queue for this group
+        self.group_music_queue[chat_id] = {
+            'queue': songs.copy(),
+            'current_song': songs[0],
+            'current_index': 0,
+            'playlist_name': playlist['name'],
+            'requested_by': user_name,
+            'user_id': user_id,
+            'auto_play': True,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Start playing first song
+        await update.message.reply_text(
+            f"🎵 **Starting Sequential Playlist Play** 🎵\n\n"
+            f"📀 **Playlist**: {playlist['name']}\n"
+            f"🎶 **Now Playing**: *{songs[0]}*\n"
+            f"📊 **Queue**: {len(songs)} songs total\n"
+            f"🎤 **Requested by**: {user_name}\n\n"
+            f"🎵 Playing automatically one by one! Use `/next` to skip or `/stop` to stop! 😊"
+        )
+        
+        # Start auto-play sequence
+        asyncio.create_task(self.auto_play_sequence(chat_id, update))
+    
+    async def auto_play_sequence(self, chat_id: int, update: Update):
+        """Handle automatic sequential playing"""
+        try:
+            while chat_id in self.group_music_queue:
+                queue_data = self.group_music_queue[chat_id]
+                
+                if not queue_data['auto_play']:
+                    break
+                
+                # Wait for song duration (simulate 10 seconds per song)
+                await asyncio.sleep(10)
+                
+                if chat_id not in self.group_music_queue:
+                    break
+                
+                # Move to next song
+                queue_data['current_index'] += 1
+                
+                if queue_data['current_index'] >= len(queue_data['queue']):
+                    # Playlist finished
+                    await update.message.reply_text(
+                        f"🎵 **Playlist Completed!** 🎵\n\n"
+                        f"📀 **Playlist**: {queue_data['playlist_name']}\n"
+                        f"🎶 **Total songs played**: {len(queue_data['queue'])}\n"
+                        f"🎤 **Requested by**: {queue_data['requested_by']}\n\n"
+                        f"🎵 Thanks for listening! Use `/play playlist_name` to play again! lol 😊"
+                    )
+                    del self.group_music_queue[chat_id]
+                    break
+                
+                # Play next song
+                next_song = queue_data['queue'][queue_data['current_index']]
+                queue_data['current_song'] = next_song
+                
+                await update.message.reply_text(
+                    f"🎶 **Auto-Next**: *{next_song}*\n"
+                    f"📊 **Progress**: {queue_data['current_index'] + 1}/{len(queue_data['queue'])}\n"
+                    f"🎵 Sequential playing continues... 😊"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in auto_play_sequence: {e}")
+            if chat_id in self.group_music_queue:
+                del self.group_music_queue[chat_id]
+    
+    async def play_single_song_from_playlist(self, update: Update, found_song: Dict, user_name: str, user_id: int, chat_id: int):
+        """Play a single song from user's playlist"""
+        await update.message.reply_text(
+            f"🎵 **Now Playing**: *{found_song['song_name']}*\n"
+            f"📀 **From Playlist**: {found_song['playlist_name']}\n"
+            f"🎤 **Requested by**: {user_name}\n\n"
+            f"🎶 Playing from your personal collection! lol 😊"
+        )
+        
+        # Store current song info
         self.group_current_song[chat_id] = {
-            'song': playlist_data['songs'][0],
-            'playlist': found_playlist['name'],
-            'playlist_queue': playlist_data['songs'][1:],  # Remaining songs
-            'current_song_index': 0,
+            'song': found_song['song_name'],
+            'playlist': found_song['playlist_name'],
             'requested_by': user_name,
             'user_id': user_id,
             'timestamp': datetime.now().isoformat()
         }
+    
+    async def play_general_song(self, update: Update, song_name: str, user_name: str, user_id: int, chat_id: int):
+        """Play any song (not from playlist)"""
+        await update.message.reply_text(
+            f"🎵 **Now Playing**: *{song_name}*\n"
+            f"🎤 **Requested by**: {user_name}\n\n"
+            f"🎶 Enjoy the music! 😊\n\n"
+            f"💡 *Tip: Create playlists in our private chat for sequential playing!*"
+        )
+        
+        # Store current song info
+        self.group_current_song[chat_id] = {
+            'song': song_name,
+            'playlist': 'General',
+            'requested_by': user_name,
+            'user_id': user_id,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    # Queue Management Commands
+    async def next_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Skip to next song in queue"""
+        chat_id = update.effective_chat.id
+        user_name = update.effective_user.first_name or "friend"
+        
+        if chat_id not in self.group_music_queue:
+            await update.message.reply_text(
+                f"Hey {user_name}! No playlist is currently playing! 🎵\n"
+                f"Use `/play playlist_name` to start sequential playing! 😊"
+            )
+            return
+        
+        queue_data = self.group_music_queue[chat_id]
+        
+        if queue_data['current_index'] >= len(queue_data['queue']) - 1:
+            await update.message.reply_text(
+                f"🎵 **Playlist Finished!** That was the last song! 😊\n"
+                f"📀 Playlist: {queue_data['playlist_name']}\n"
+                f"🎵 Use `/play playlist_name` to replay! 😊"
+            )
+            del self.group_music_queue[chat_id]
+            return
+        
+        # Skip to next song
+        queue_data['current_index'] += 1
+        next_song = queue_data['queue'][queue_data['current_index']]
+        queue_data['current_song'] = next_song
         
         await update.message.reply_text(
-            f"🎵 Now playing playlist: **{found_playlist['name']}**\n"
-            f"🎶 Starting with: *{playlist_data['songs'][0]}*\n"
-            f"📀 Total songs: {song_count}\n"
-            f"🎤 Requested by: {user_name}\n\n"
-            f"🎵 Enjoy your personal playlist! lol 😊"
+            f"⏭️ **Skipped!** Now Playing: *{next_song}*\n"
+            f"📊 **Progress**: {queue_data['current_index'] + 1}/{len(queue_data['queue'])}\n"
+            f"🎵 Sequential playing continues! 😊"
         )
+    
+    async def stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Stop current playlist"""
+        chat_id = update.effective_chat.id
+        user_name = update.effective_user.first_name or "friend"
+        
+        if chat_id not in self.group_music_queue:
+            await update.message.reply_text(
+                f"Hey {user_name}! No playlist is currently playing! 🎵\n"
+                f"Use `/play playlist_name` to start sequential playing! 😊"
+            )
+            return
+        
+        queue_data = self.group_music_queue[chat_id]
+        playlist_name = queue_data['playlist_name']
+        played_songs = queue_data['current_index'] + 1
+        total_songs = len(queue_data['queue'])
+        
+        # Stop auto-play and clear queue
+        queue_data['auto_play'] = False
+        del self.group_music_queue[chat_id]
+        
+        await update.message.reply_text(
+            f"⏹️ **Stopped!** Playlist '{playlist_name}' has been stopped.\n"
+            f"📊 **Played**: {played_songs}/{total_songs} songs\n"
+            f"🎵 Thanks for listening! Use `/play playlist_name` to start again! 😊"
+        )
+    
+    async def queue_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show current queue status"""
+        chat_id = update.effective_chat.id
+        user_name = update.effective_user.first_name or "friend"
+        
+        if chat_id not in self.group_music_queue:
+            await update.message.reply_text(
+                f"Hey {user_name}! No playlist is currently playing! 🎵\n"
+                f"Use `/play playlist_name` to start sequential playing! 😊"
+            )
+            return
+        
+        queue_data = self.group_music_queue[chat_id]
+        current_index = queue_data['current_index']
+        total_songs = len(queue_data['queue'])
+        
+        queue_text = f"🎵 **Current Queue Status** 🎵\n\n"
+        queue_text += f"📀 **Playlist**: {queue_data['playlist_name']}\n"
+        queue_text += f"🎶 **Now Playing**: *{queue_data['current_song']}*\n"
+        queue_text += f"📊 **Progress**: {current_index + 1}/{total_songs}\n"
+        queue_text += f"🎤 **Requested by**: {queue_data['requested_by']}\n\n"
+        
+        # Show next few songs
+        if current_index + 1 < total_songs:
+            queue_text += f"**Up Next:**\n"
+            next_songs = queue_data['queue'][current_index + 1:current_index + 4]
+            for i, song in enumerate(next_songs, 1):
+                queue_text += f"{i}. {song}\n"
+            
+            if len(queue_data['queue']) > current_index + 4:
+                remaining = len(queue_data['queue']) - current_index - 4
+                queue_text += f"... and {remaining} more songs!\n"
+        else:
+            queue_text += f"**This is the last song!** 🎵\n"
+        
+        queue_text += f"\n🎵 Use `/next` to skip, `/stop` to stop! 😊"
+        
+        await update.message.reply_text(queue_text, parse_mode='Markdown')
+    
+    async def show_play_help(self, update: Update, user_name: str, user_id: int):
+        """Show help for play command"""
+        user_playlists = self.get_user_playlists(user_id)
+        
+        help_text = f"Hey {user_name}! 🎵 Here's how to use `/play`:\n\n"
+        
+        if user_playlists:
+            help_text += f"**Your Playlists:**\n"
+            for playlist_name, playlist_data in user_playlists.items():
+                song_count = len(playlist_data['songs'])
+                help_text += f"🎵 `/play {playlist_name}` - Play {song_count} songs sequentially\n"
+            help_text += f"\n"
+        
+        help_text += f"**Usage:**\n"
+        help_text += f"🎶 `/play song_name` - Play specific song\n"
+        help_text += f"🎵 `/play playlist_name` - Play entire playlist sequentially\n"
+        help_text += f"📋 `/queue` - Show current queue\n"
+        help_text += f"⏭️ `/next` - Skip to next song\n"
+        help_text += f"⏹️ `/stop` - Stop current playlist\n\n"
+        
+        if not user_playlists:
+            help_text += f"💡 Create playlists in our private chat first! 😊\n"
+            help_text += f"📝 Say: \"My happy playlist: song1, song2, song3\""
+        else:
+            help_text += f"🎵 Sequential playing: Songs play automatically one by one!"
+        
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+    
+    # Original Music Commands
+    async def play_playlist_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Legacy playlist playing command"""
+        await self.play_command(update, context)  # Redirect to enhanced play command
     
     async def playlists_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show user's playlists"""
@@ -491,10 +654,10 @@ class AanyaaBot:
             if song_count > 3:
                 playlist_text += f"   ... and {song_count - 3} more!\n"
             
-            playlist_text += "\n"
+            playlist_text += f"   🎵 Use: `/play {playlist_name}` for sequential play\n\n"
         
-        playlist_text += f"💡 **Tip**: Use `/play song_name` in groups to play music!\n"
-        playlist_text += f"🎵 **Or**: Use `/playplaylist playlist_name` to play entire playlists!"
+        playlist_text += f"💡 **Sequential Playing**: Each playlist plays songs automatically one by one!\n"
+        playlist_text += f"🎵 **Controls**: Use `/next`, `/stop`, `/queue` during playback!"
         
         await update.message.reply_text(playlist_text, parse_mode='Markdown')
     
@@ -511,7 +674,7 @@ class AanyaaBot:
         
         user_playlists = self.get_user_playlists(user_id)
         
-        music_text = f"🎵 **Music Management for {user_name}** 🎵\n\n"
+        music_text = f"🎵 **Sequential Music Management for {user_name}** 🎵\n\n"
         
         if user_playlists:
             music_text += f"**Your Playlists ({len(user_playlists)}):**\n"
@@ -526,14 +689,17 @@ class AanyaaBot:
         music_text += f"📝 \"When I'm sad: song1, song2\"\n"
         music_text += f"📝 \"For workout: song1, song2\"\n\n"
         
-        music_text += f"**How to play in groups:**\n"
+        music_text += f"**Sequential Playing in Groups:**\n"
         music_text += f"🎶 `/play song_name` - Play specific song\n"
-        music_text += f"🎵 `/playplaylist playlist_name` - Play entire playlist\n"
-        music_text += f"🗣️ \"Play my happy playlist\" - Natural language request\n\n"
+        music_text += f"🎵 `/play playlist_name` - Play entire playlist sequentially\n"
+        music_text += f"⏭️ `/next` - Skip to next song\n"
+        music_text += f"⏹️ `/stop` - Stop playlist\n"
+        music_text += f"📋 `/queue` - Check playing status\n"
+        music_text += f"🗣️ \"Play my happy playlist\" - Natural language\n\n"
         
         music_text += f"**Tips:**\n"
-        music_text += f"🎶 I can handle multiple playlists per mood!\n"
-        music_text += f"🎵 Songs from your playlists get priority in `/play`!\n"
+        music_text += f"🎶 Sequential playing: Songs play automatically one by one!\n"
+        music_text += f"🎵 Each song plays for 10 seconds (simulated duration)\n"
         music_text += f"📋 Use `/playlists` to view all your playlists!\n\n"
         
         music_text += f"Just tell me about your music preferences! 😊"
@@ -598,11 +764,11 @@ class AanyaaBot:
                         response += f"{i}. {song}\n"
                     if len(songs) > 5:
                         response += f"... and {len(songs) - 5} more!\n"
-                    response += f"\n**How to play:**\n"
-                    response += f"🎵 `/playplaylist {playlist_data['playlist_name']}` - Play entire playlist\n"
+                    response += f"\n**Sequential Playing in Groups:**\n"
+                    response += f"🎵 `/play {playlist_data['playlist_name']}` - Play entire playlist sequentially\n"
                     response += f"🎶 `/play song_name` - Play specific song\n"
                     response += f"🗣️ \"Play my {playlist_data['playlist_name'].lower()} playlist\" - Natural language\n\n"
-                    response += f"Use `/playlists` to view all your playlists! 🎶"
+                    response += f"🎵 Songs will play automatically one by one! Use `/playlists` to view all! 🎶"
                     
                     await update.message.reply_text(response, parse_mode='Markdown')
                     self.add_to_memory(user_id, user_message, response, user_name, chat_type, chat_title)
@@ -614,37 +780,13 @@ class AanyaaBot:
             if playlist_request:
                 # Check if user has this playlist
                 user_playlists = self.get_user_playlists(user_id)
-                found_playlist = None
-                
-                for plist_name, plist_data in user_playlists.items():
-                    if playlist_request.lower() in plist_name.lower():
-                        found_playlist = {'name': plist_name, 'data': plist_data}
-                        break
+                found_playlist = self.find_playlist_by_name(user_playlists, playlist_request)
                 
                 if found_playlist:
-                    # Auto-play the playlist
+                    # Auto-play the playlist sequentially
                     chat_id = update.effective_chat.id
-                    playlist_data = found_playlist['data']
-                    
-                    if playlist_data['songs']:
-                        self.group_current_song[chat_id] = {
-                            'song': playlist_data['songs'][0],
-                            'playlist': found_playlist['name'],
-                            'playlist_queue': playlist_data['songs'][1:],
-                            'current_song_index': 0,
-                            'requested_by': user_name,
-                            'user_id': user_id,
-                            'timestamp': datetime.now().isoformat()
-                        }
-                        
-                        response = f"🎵 Playing your **{found_playlist['name']}** playlist! 😊\n"
-                        response += f"🎶 Starting with: *{playlist_data['songs'][0]}*\n"
-                        response += f"📀 {len(playlist_data['songs'])} songs in queue\n"
-                        response += f"🎵 Enjoy your music! lol"
-                        
-                        await update.message.reply_text(response, parse_mode='Markdown')
-                        self.add_to_memory(user_id, user_message, response, user_name, chat_type, chat_title)
-                        return
+                    await self.play_playlist_sequentially(update, found_playlist, user_name, user_id, chat_id)
+                    return
                 else:
                     response = f"Hey {user_name}! I couldn't find your '{playlist_request}' playlist 😅\n"
                     response += f"Create it in our private chat first! 🎵"
@@ -708,7 +850,7 @@ class AanyaaBot:
             current_location = f"Currently in: {chat_title}" if chat_type != 'private' else "Currently in: Private Chat"
             
             # Enhanced personality prompt with memory and music context
-            prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with music powers! Your personality traits:
+            prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with sequential music powers! Your personality traits:
 
 MEMORY CONTEXT:
 {memory_context}
@@ -728,14 +870,14 @@ IMPORTANT RESPONSE RULES:
 - Be sweet but not overly formal
 - Use emojis occasionally but don't overuse them
 - Remember our previous conversations and refer to them when relevant
-- If someone talks about music, be excited and suggest they create playlists!
+- If someone talks about music, be excited and mention sequential playlist playing!
 
 PERSONALITY:
 - Cute, friendly, and helpful
 - Sometimes playful and funny
 - Use expressions like "hehe" when appropriate
 - Be caring but keep responses short and sweet
-- Love music and helping with playlists!
+- Love music and helping with sequential playlists!
 
 User {user_name} says: {user_message}
 
@@ -772,9 +914,15 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         # Create application
         application = Application.builder().token(self.telegram_token).build()
         
+        # Store application reference for auto-play
+        self.app = application
+        
         # Add command handlers
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("play", self.play_command))
+        application.add_handler(CommandHandler("next", self.next_command))
+        application.add_handler(CommandHandler("stop", self.stop_command))
+        application.add_handler(CommandHandler("queue", self.queue_command))
         application.add_handler(CommandHandler("playplaylist", self.play_playlist_command))
         application.add_handler(CommandHandler("playlists", self.playlists_command))
         application.add_handler(CommandHandler("mymusic", self.mymusic_command))
@@ -785,7 +933,7 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         # Add error handler
         application.add_error_handler(self.error_handler)
         
-        logger.info("🎵 Starting enhanced Aanyaa bot with complete music system and AI personality...")
+        logger.info("🎵 Starting Aanyaa bot with Complete Sequential Playlist System...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 def run_flask():
