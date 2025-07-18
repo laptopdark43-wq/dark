@@ -7,6 +7,9 @@ from flask import Flask
 import threading
 import asyncio
 from datetime import datetime
+import json
+import re
+from typing import Dict, List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,7 +63,13 @@ class AanyaaBot:
         # Enhanced memory system - stores last 10 chats per user
         self.user_memory = {}
         
-        logger.info("✅ Bot initialized successfully with OpenAI A4F API using Gemini 2.5 Flash")
+        # NEW: Music system - stores playlists for each user
+        self.user_playlists = {}
+        
+        # NEW: Currently playing songs in groups
+        self.group_current_song = {}
+        
+        logger.info("✅ Bot initialized successfully with OpenAI A4F API and Music System")
     
     def add_to_memory(self, user_id: int, user_message: str, bot_response: str, user_name: str, chat_type: str, chat_title: str = None):
         """Add conversation to user's memory"""
@@ -96,6 +105,96 @@ class AanyaaBot:
             memory_context += f"   My reply: {conv['bot_response'][:60]}{'...' if len(conv['bot_response']) > 60 else ''}\n"
         
         return memory_context
+    
+    # NEW: Music System Methods
+    def add_to_playlist(self, user_id: int, playlist_name: str, songs: List[str], user_name: str):
+        """Add songs to user's playlist"""
+        if user_id not in self.user_playlists:
+            self.user_playlists[user_id] = {}
+        
+        if playlist_name not in self.user_playlists[user_id]:
+            self.user_playlists[user_id][playlist_name] = {
+                'songs': [],
+                'created_date': datetime.now().isoformat(),
+                'user_name': user_name
+            }
+        
+        # Add new songs to existing playlist
+        for song in songs:
+            if song not in self.user_playlists[user_id][playlist_name]['songs']:
+                self.user_playlists[user_id][playlist_name]['songs'].append(song)
+        
+        logger.info(f"Added {len(songs)} songs to playlist '{playlist_name}' for user {user_id}")
+    
+    def get_user_playlists(self, user_id: int) -> Dict:
+        """Get all playlists for a user"""
+        return self.user_playlists.get(user_id, {})
+    
+    def detect_playlist_creation(self, message: str) -> Dict:
+        """Detect if user is creating a playlist"""
+        message_lower = message.lower()
+        
+        # Pattern for playlist creation
+        playlist_patterns = [
+            r'create playlist[:\s]*([^\n]+)',
+            r'my ([a-zA-Z\s]+) playlist[:\s]*([^\n]+)',
+            r'([a-zA-Z\s]+) mood songs[:\s]*([^\n]+)',
+            r'playlist name[:\s]*([^\n]+)',
+        ]
+        
+        for pattern in playlist_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                if len(match.groups()) == 2:
+                    return {
+                        'playlist_name': match.group(1).strip(),
+                        'songs_text': match.group(2).strip()
+                    }
+                else:
+                    return {
+                        'playlist_name': match.group(1).strip(),
+                        'songs_text': message[match.end():].strip()
+                    }
+        
+        # Alternative patterns for mood-based playlists
+        mood_patterns = [
+            r'when i\'m (sad|happy|angry|excited|chill|romantic|energetic)[:\s]*([^\n]+)',
+            r'for (workout|study|sleep|party|driving|relaxation)[:\s]*([^\n]+)',
+        ]
+        
+        for pattern in mood_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                return {
+                    'playlist_name': f"{match.group(1).title()} Mood",
+                    'songs_text': match.group(2).strip()
+                }
+        
+        return None
+    
+    def extract_songs_from_text(self, text: str) -> List[str]:
+        """Extract song names from text"""
+        # Split by common delimiters
+        delimiters = ['\n', ',', ';', '|', '-', '•', '*']
+        songs = [text]
+        
+        for delimiter in delimiters:
+            temp = []
+            for song in songs:
+                temp.extend([s.strip() for s in song.split(delimiter) if s.strip()])
+            songs = temp
+        
+        # Clean up song names
+        cleaned_songs = []
+        for song in songs:
+            # Remove common prefixes/suffixes
+            song = re.sub(r'^\d+[\.\)]\s*', '', song)  # Remove numbering
+            song = re.sub(r'^[-•*]\s*', '', song)  # Remove bullet points
+            song = song.strip()
+            if song and len(song) > 2:  # Only keep meaningful song names
+                cleaned_songs.append(song)
+        
+        return cleaned_songs
     
     def check_special_responses(self, user_message: str, user_name: str) -> str:
         """Check for special phrase responses"""
@@ -148,19 +247,148 @@ class AanyaaBot:
         # Check if user has previous conversations
         memory_info = ""
         if user_id in self.user_memory and self.user_memory[user_id]:
-            memory_info = f"\n\n🧠 I remember our last {len(self.user_memory[user_id])} conversations across all chats! 😊"
+            memory_info = f"\n\n🧠 I remember our last {len(self.user_memory[user_id])} conversations!"
+        
+        # Check if user has playlists
+        playlist_info = ""
+        if user_id in self.user_playlists and self.user_playlists[user_id]:
+            playlist_count = len(self.user_playlists[user_id])
+            playlist_info = f"\n🎵 You have {playlist_count} playlist{'s' if playlist_count > 1 else ''}!"
         
         chat_type_info = "private chat" if update.message.chat.type == 'private' else f"group ({update.message.chat.title})"
         
         await update.message.reply_text(
             f"Hi {user_name}! I'm Aanyaa 🌸\n"
-            f"Your cute AI assistant powered by Gemini 2.5 Flash!\n\n"
+            f"Your cute AI assistant with music powers!\n\n"
             f"💕 **Private chats**: Just message me!\n"
             f"💕 **Groups**: Tag me @{context.bot.username or 'aanyaa'} or reply\n"
-            f"🧠 **Memory**: I remember our last 10 chats in ALL locations!\n"
-            f"📍 **Current location**: {chat_type_info}{memory_info}\n\n"
+            f"🧠 **Memory**: I remember our last 10 chats!\n"
+            f"🎵 **Music**: Create playlists & play songs!\n\n"
+            f"**Music Commands:**\n"
+            f"🎶 `/play song_name` - Play song in group\n"
+            f"🎵 `/playlists` - View your playlists\n"
+            f"📝 `/mymusic` - Manage your music\n\n"
+            f"**Other Commands:**\n"
+            f"📋 `/memory` - View chat history\n"
+            f"🧹 `/clear` - Clear memory\n\n"
+            f"📍 **Current location**: {chat_type_info}{memory_info}{playlist_info}\n\n"
             f"What's up? 😊"
         )
+    
+    async def play_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /play command for music in groups"""
+        user_name = update.effective_user.first_name or "friend"
+        chat_id = update.effective_chat.id
+        
+        # Check if in group
+        if update.message.chat.type == 'private':
+            await update.message.reply_text(
+                f"Hey {user_name}! 🎵 The /play command works in groups only!\n"
+                f"Add me to a group and try `/play song_name` there! 😊"
+            )
+            return
+        
+        # Get song name from command
+        if context.args:
+            song_name = ' '.join(context.args)
+        else:
+            await update.message.reply_text(
+                f"Hey {user_name}! 🎵 Please tell me what to play!\n"
+                f"Use: `/play song_name` 😊"
+            )
+            return
+        
+        # Store currently playing song
+        self.group_current_song[chat_id] = {
+            'song': song_name,
+            'requested_by': user_name,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Simulate playing (in real implementation, you'd integrate with music service)
+        await update.message.reply_text(
+            f"🎵 Now playing: **{song_name}**\n"
+            f"🎤 Requested by: {user_name}\n"
+            f"🎶 Enjoy the music! lol 😊\n\n"
+            f"*Note: This is a simulation. In full version, I'd stream actual music!*"
+        )
+        
+        logger.info(f"🎵 Playing song '{song_name}' in group {chat_id} requested by {user_name}")
+    
+    async def playlists_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show user's playlists"""
+        user_id = update.effective_user.id
+        user_name = update.effective_user.first_name or "friend"
+        
+        user_playlists = self.get_user_playlists(user_id)
+        
+        if not user_playlists:
+            await update.message.reply_text(
+                f"Hey {user_name}! 🎵 You don't have any playlists yet!\n\n"
+                f"**How to create playlists:**\n"
+                f"📝 Send me: \"My happy playlist: song1, song2, song3\"\n"
+                f"📝 Or: \"Create playlist chill: song1, song2\"\n"
+                f"📝 Or: \"When I'm sad: song1, song2\"\n\n"
+                f"I'll remember all your playlists! 😊"
+            )
+            return
+        
+        playlist_text = f"🎵 **{user_name}'s Music Collection** 🎵\n\n"
+        
+        for playlist_name, playlist_data in user_playlists.items():
+            song_count = len(playlist_data['songs'])
+            playlist_text += f"📀 **{playlist_name}**\n"
+            playlist_text += f"   🎶 {song_count} song{'s' if song_count != 1 else ''}\n"
+            
+            # Show first 3 songs
+            for i, song in enumerate(playlist_data['songs'][:3]):
+                playlist_text += f"   • {song}\n"
+            
+            if song_count > 3:
+                playlist_text += f"   ... and {song_count - 3} more!\n"
+            
+            playlist_text += "\n"
+        
+        playlist_text += f"💡 **Tip**: Use `/play song_name` in groups to play music!"
+        
+        await update.message.reply_text(playlist_text, parse_mode='Markdown')
+    
+    async def mymusic_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Manage user's music"""
+        user_id = update.effective_user.id
+        user_name = update.effective_user.first_name or "friend"
+        
+        if update.message.chat.type != 'private':
+            await update.message.reply_text(
+                f"Hey {user_name}! 🎵 Use `/mymusic` in our private chat for playlist management! 😊"
+            )
+            return
+        
+        user_playlists = self.get_user_playlists(user_id)
+        
+        music_text = f"🎵 **Music Management for {user_name}** 🎵\n\n"
+        
+        if user_playlists:
+            music_text += f"**Your Playlists ({len(user_playlists)}):**\n"
+            for playlist_name, playlist_data in user_playlists.items():
+                music_text += f"📀 {playlist_name} ({len(playlist_data['songs'])} songs)\n"
+        else:
+            music_text += "**No playlists yet!**\n"
+        
+        music_text += f"\n**How to create playlists:**\n"
+        music_text += f"📝 \"My happy playlist: song1, song2, song3\"\n"
+        music_text += f"📝 \"Create playlist chill: song1, song2\"\n"
+        music_text += f"📝 \"When I'm sad: song1, song2\"\n"
+        music_text += f"📝 \"For workout: song1, song2\"\n\n"
+        
+        music_text += f"**Tips:**\n"
+        music_text += f"🎶 I can handle multiple playlists per mood!\n"
+        music_text += f"🎵 Use `/play song_name` in groups to play music!\n"
+        music_text += f"📋 Use `/playlists` to view all your playlists!\n\n"
+        
+        music_text += f"Just tell me about your music preferences! 😊"
+        
+        await update.message.reply_text(music_text, parse_mode='Markdown')
     
     async def memory_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show user their conversation memory"""
@@ -204,6 +432,25 @@ class AanyaaBot:
         
         # Log the chat details
         logger.info(f"📨 Received message from {user_name} (ID: {user_id}) in {chat_type}")
+        
+        # Check for playlist creation in private chat
+        if chat_type == 'private':
+            playlist_data = self.detect_playlist_creation(user_message)
+            if playlist_data:
+                songs = self.extract_songs_from_text(playlist_data['songs_text'])
+                if songs:
+                    self.add_to_playlist(user_id, playlist_data['playlist_name'], songs, user_name)
+                    response = f"🎵 Awesome! I've created your **{playlist_data['playlist_name']}** playlist with {len(songs)} songs! 😊\n\n"
+                    response += f"**Songs added:**\n"
+                    for i, song in enumerate(songs[:5], 1):
+                        response += f"{i}. {song}\n"
+                    if len(songs) > 5:
+                        response += f"... and {len(songs) - 5} more!\n"
+                    response += f"\nUse `/playlists` to view all your playlists! 🎶"
+                    
+                    await update.message.reply_text(response, parse_mode='Markdown')
+                    self.add_to_memory(user_id, user_message, response, user_name, chat_type, chat_title)
+                    return
         
         # Private chat - ALWAYS respond and remember
         if chat_type == 'private':
@@ -250,14 +497,23 @@ class AanyaaBot:
             # Get memory context for this specific user
             memory_context = self.get_memory_context(user_id, user_name)
             
+            # Get user's playlist context
+            playlist_context = ""
+            if user_id in self.user_playlists and self.user_playlists[user_id]:
+                playlist_names = list(self.user_playlists[user_id].keys())
+                playlist_context = f"User's playlists: {', '.join(playlist_names)}"
+            
             # Current chat context
             current_location = f"Currently in: {chat_title}" if chat_type != 'private' else "Currently in: Private Chat"
             
-            # Enhanced personality prompt with memory
-            prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with these personality traits:
+            # Enhanced personality prompt with memory and music context
+            prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with music powers! Your personality traits:
 
 MEMORY CONTEXT:
 {memory_context}
+
+MUSIC CONTEXT:
+{playlist_context}
 
 CURRENT CONVERSATION:
 {current_location}
@@ -271,12 +527,14 @@ IMPORTANT RESPONSE RULES:
 - Be sweet but not overly formal
 - Use emojis occasionally but don't overuse them
 - Remember our previous conversations and refer to them when relevant
+- If someone talks about music, be excited and suggest they create playlists!
 
 PERSONALITY:
 - Cute, friendly, and helpful
 - Sometimes playful and funny
 - Use expressions like "hehe" when appropriate
 - Be caring but keep responses short and sweet
+- Love music and helping with playlists!
 
 User {user_name} says: {user_message}
 
@@ -313,8 +571,11 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         # Create application
         application = Application.builder().token(self.telegram_token).build()
         
-        # Add handlers
+        # Add command handlers
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("play", self.play_command))
+        application.add_handler(CommandHandler("playlists", self.playlists_command))
+        application.add_handler(CommandHandler("mymusic", self.mymusic_command))
         application.add_handler(CommandHandler("memory", self.memory_command))
         application.add_handler(CommandHandler("clear", self.clear_command))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
@@ -322,7 +583,7 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         # Add error handler
         application.add_error_handler(self.error_handler)
         
-        logger.info("🌸 Starting Aanyaa bot with Gemini 2.5 Flash via A4F API...")
+        logger.info("🎵 Starting Aanyaa bot with Music System and Gemini 2.5 Flash...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 def run_flask():
