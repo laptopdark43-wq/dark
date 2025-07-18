@@ -1,11 +1,11 @@
 import os
 import logging
 import asyncio
-import re
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 from typing import Dict, List
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -20,90 +20,78 @@ class AanyaaBot:
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         
-        if not self.telegram_token or not self.gemini_api_key:
-            raise ValueError("Please set TELEGRAM_BOT_TOKEN and GEMINI_API_KEY environment variables")
+        if not self.telegram_token:
+            logger.error("TELEGRAM_BOT_TOKEN not found")
+            raise ValueError("TELEGRAM_BOT_TOKEN environment variable is required")
+        
+        if not self.gemini_api_key:
+            logger.error("GEMINI_API_KEY not found")
+            raise ValueError("GEMINI_API_KEY environment variable is required")
+        
+        logger.info("Both API keys found successfully")
         
         # Configure Google AI
-        genai.configure(api_key=self.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        try:
+            genai.configure(api_key=self.gemini_api_key)
+            self.model = genai.GenerativeModel('gemini-pro')
+            logger.info("Google AI configured successfully")
+        except Exception as e:
+            logger.error(f"Failed to configure Google AI: {e}")
+            raise
         
-        # Store conversation history for each user
-        self.user_conversations: Dict[int, List[Dict]] = {}
+        # Store conversation history
+        self.user_conversations: Dict[int, List[str]] = {}
         
-        # Aanyaa's personality prompt
+        # Aanyaa's personality
         self.personality_prompt = (
-            "You are Aanyaa, a cute and friendly AI assistant girl. Your personality traits:\n"
-            "- Always sweet, cheerful, and helpful\n"
-            "- Use cute expressions and emojis occasionally\n"
-            "- Sometimes add 'hehe' or 'hihi' when appropriate\n"
-            "- Be warm and caring in your responses\n"
-            "- Remember conversations with users to build relationships\n"
-            "- Show genuine interest in helping users\n"
-            "- Keep responses natural and conversational\n"
-            "Always respond as Aanyaa would - cute, helpful, and friendly!"
+            "You are Aanyaa, a cute and friendly AI assistant girl. "
+            "Be sweet, helpful, and use cute expressions occasionally. "
+            "Add 'hehe' or emojis when appropriate. Always be warm and caring."
         )
     
     def should_respond_in_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Check if bot should respond in group chats"""
         message = update.message
         
-        # Always respond in private chats
         if message.chat.type == 'private':
             return True
         
-        # In group chats, only respond if:
-        # 1. Bot is mentioned (@aanyaa or @your_bot_username)
-        # 2. Message is a reply to bot's message
+        bot_username = context.bot.username.lower() if context.bot.username else "aanyaa"
         
-        bot_username = context.bot.username.lower()
-        
-        # Check if bot is mentioned
+        # Check mentions
         if message.entities:
             for entity in message.entities:
                 if entity.type == 'mention':
-                    mentioned_username = message.text[entity.offset:entity.offset + entity.length].lower()
-                    if mentioned_username == f'@{bot_username}' or mentioned_username == '@aanyaa':
+                    mentioned = message.text[entity.offset:entity.offset + entity.length].lower()
+                    if mentioned == f'@{bot_username}' or mentioned == '@aanyaa':
                         return True
         
-        # Check if message is a reply to bot's message
-        if message.reply_to_message:
-            if message.reply_to_message.from_user.id == context.bot.id:
-                return True
+        # Check replies
+        if message.reply_to_message and message.reply_to_message.from_user.id == context.bot.id:
+            return True
         
         return False
     
-    def clean_message_text(self, text: str, bot_username: str) -> str:
-        """Remove bot mentions from message text"""
-        # Remove @username mentions
-        text = re.sub(r'@\w+', '', text).strip()
-        return text
-    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
-        user_id = update.effective_user.id
         user_name = update.effective_user.first_name or "friend"
         
         welcome_message = (
             f"Hi {user_name}! I'm **Aanyaa** 🌸\n\n"
-            "I'm your cute AI assistant powered by Google Gemma! Here's what I can help you with:\n\n"
+            "I'm your cute AI assistant! Here's what I can help you with:\n\n"
             "💭 **Chat with me about anything!**\n"
             "✨ **Creative writing & storytelling**\n"
             "🧠 **Problem solving & questions**\n"
-            "📚 **Learning & explanations**\n"
-            "🎨 **Fun conversations**\n\n"
-            "**In groups**: Tag me with @aanyaa or reply to my messages to chat! 💕\n\n"
+            "📚 **Learning & explanations**\n\n"
+            "**In groups**: Tag me with @aanyaa or reply to my messages! 💕\n\n"
             "**Commands:**\n"
-            "/start - See this cute intro again hehe\n"
-            "/clear - Clear our conversation history\n"
+            "/start - See this intro\n"
+            "/clear - Clear our chat history\n"
             "/help - Get help from me!\n\n"
-            "Let's be friends and chat! What would you like to talk about? 😊"
+            "Let's chat! What would you like to talk about? 😊"
         )
         
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
-        
-        # Initialize conversation history for new users
-        if user_id not in self.user_conversations:
-            self.user_conversations[user_id] = []
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -120,15 +108,7 @@ class AanyaaBot:
             "✨ Creative writing and stories\n"
             "✨ Math and problem solving\n"
             "✨ Just chat and have fun!\n\n"
-            "**Commands:**\n"
-            "/start - Welcome message\n"
-            "/clear - Clear our chat history\n"
-            "/help - This help message\n\n"
-            "**Tips:**\n"
-            "💡 I remember our conversations, so feel free to continue topics!\n"
-            "💡 Be specific with questions for better help\n"
-            "💡 Use /clear if you want to start fresh\n\n"
-            "I'm here to help and chat anytime! What can I do for you? 😊"
+            "I'm here to help anytime! 😊"
         )
         await update.message.reply_text(help_text, parse_mode='Markdown')
     
@@ -140,13 +120,11 @@ class AanyaaBot:
         self.user_conversations[user_id] = []
         await update.message.reply_text(
             f"Okayy {user_name}! ✨ I've cleared our conversation history. "
-            "We can start fresh now! What would you like to chat about? 😊"
+            "We can start fresh now! 😊"
         )
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle regular messages"""
-        
-        # Check if bot should respond (important for group chats)
         if not self.should_respond_in_group(update, context):
             return
         
@@ -154,64 +132,21 @@ class AanyaaBot:
         user_name = update.effective_user.first_name or "friend"
         user_message = update.message.text
         
-        # Clean message text (remove mentions)
-        bot_username = context.bot.username or "aanyaa"
-        cleaned_message = self.clean_message_text(user_message, bot_username)
-        
-        # Initialize conversation if not exists
         if user_id not in self.user_conversations:
             self.user_conversations[user_id] = []
         
-        # Show typing indicator
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         
         try:
-            # Create context-aware message with personality
-            context_message = f"""
-            {self.personality_prompt}
+            # Create prompt with personality
+            prompt = f"{self.personality_prompt}\n\nUser's name: {user_name}\nUser's message: {user_message}"
             
-            User's name: {user_name}
-            User's message: {cleaned_message}
-            
-            Respond as Aanyaa would - cute, helpful, and friendly!
-            """
-            
-            # Add user message to conversation history
-            self.user_conversations[user_id].append({
-                'role': 'user',
-                'parts': [context_message]
-            })
-            
-            # Keep only last 20 exchanges to manage memory
-            if len(self.user_conversations[user_id]) > 40:
-                self.user_conversations[user_id] = self.user_conversations[user_id][-40:]
-            
-            # Create conversation context
-            conversation_history = []
-            for msg in self.user_conversations[user_id]:
-                conversation_history.append({
-                    'role': msg['role'],
-                    'parts': msg['parts']
-                })
-            
-            # Generate response using Gemini
-            chat = self.model.start_chat(history=conversation_history[:-1])
-            response = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: chat.send_message(context_message)
-            )
-            
+            # Generate response
+            response = self.model.generate_content(prompt)
             ai_response = response.text
             
-            # Add AI response to conversation history
-            self.user_conversations[user_id].append({
-                'role': 'model',
-                'parts': [ai_response]
-            })
-            
-            # Split long messages if needed
+            # Split long messages
             if len(ai_response) > 4000:
-                # Split into chunks of 4000 characters
                 chunks = [ai_response[i:i+4000] for i in range(0, len(ai_response), 4000)]
                 for chunk in chunks:
                     await update.message.reply_text(chunk)
@@ -220,14 +155,7 @@ class AanyaaBot:
                 
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            error_responses = [
-                f"Oops {user_name}! 😅 I had a little hiccup there. Can you try asking me again?",
-                f"Oh no {user_name}! 🥺 Something went wrong on my end. Let me try again!",
-                f"Sorry {user_name}! 💔 I'm having some trouble right now. Please try again in a moment!"
-            ]
-            import random
-            error_message = random.choice(error_responses)
-            await update.message.reply_text(error_message)
+            await update.message.reply_text(f"Oops {user_name}! 😅 I had a little hiccup there. Can you try again?")
     
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Log errors"""
