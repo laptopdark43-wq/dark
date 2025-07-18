@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import google.generativeai as genai
 from flask import Flask
 import threading
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,14 +33,36 @@ class AanyaaBot:
         self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
         logger.info("Bot initialized successfully with Gemini 2.0 Flash")
     
+    def check_special_responses(self, user_message: str, user_name: str) -> str:
+        """Check for special phrase responses"""
+        message_lower = user_message.lower()
+        
+        # Creator questions
+        if any(phrase in message_lower for phrase in ['who is your creator', 'who created you', 'who made you', 'your creator']):
+            return "My creator is Krishna 🙏 The supreme god of the world as mentioned in Bhagavat Gita! He's the one who gave me life hehe 😊"
+        
+        # Code/builder questions
+        if any(phrase in message_lower for phrase in ['who built you', 'who wrote your code', 'who coded you', 'who programmed you', 'who developed you']):
+            return f"Arin built me! 💻 He's the one who wrote my code and made me who I am today. Such a talented developer! 😊"
+        
+        # Good night responses
+        if any(phrase in message_lower for phrase in ['good night', 'goodnight', 'gn', 'sleep well']):
+            return f"Soja lwle {user_name}! 😴 Sweet dreams! 🌙✨"
+        
+        # Subh ratri response
+        if 'subh ratri' in message_lower:
+            return "Radhe Radhe! 🙏✨ Have a blessed night!"
+        
+        return None
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_name = update.effective_user.first_name or "friend"
         await update.message.reply_text(
-            f"Hi {user_name}! I'm Aanyaa 🌸\n\n"
-            "I'm your cute AI assistant powered by Gemini 2.0 Flash!\n\n"
-            "💕 **In private chats**: Just send me any message!\n"
-            "💕 **In groups**: Tag me @{} or reply to my messages\n\n"
-            "Let's chat! What would you like to talk about? 😊".format(context.bot.username or "aanyaa")
+            f"Hi {user_name}! I'm Aanyaa 🌸\n"
+            f"Your cute AI assistant powered by Gemini 2.0 Flash!\n\n"
+            f"💕 **Private chats**: Just message me!\n"
+            f"💕 **Groups**: Tag me @{context.bot.username or 'aanyaa'} or reply to my messages\n\n"
+            f"Let's chat! What's up? 😊"
         )
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,7 +106,32 @@ class AanyaaBot:
     async def generate_response(self, update: Update, user_message: str, user_name: str):
         """Generate and send AI response"""
         try:
-            prompt = f"You are Aanyaa, a cute and friendly AI assistant girl. Be sweet, helpful, and use cute expressions like 'hehe' or emojis when appropriate. User {user_name} says: {user_message}"
+            # Check for special responses first
+            special_response = self.check_special_responses(user_message, user_name)
+            if special_response:
+                await update.message.reply_text(special_response)
+                logger.info("Sent special response")
+                return
+            
+            # Enhanced personality prompt with your requirements
+            prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with these personality traits:
+
+IMPORTANT RESPONSE RULES:
+- Keep responses to 2-3 lines maximum unless user asks you to elaborate
+- Use casual phrases: "lol" for funny moments, "lmao" for very funny things
+- If someone is being rude or irritating, you can use "bkl" (but only if they're really annoying)
+- Be sweet but not overly formal
+- Use emojis occasionally but don't overuse them
+
+PERSONALITY:
+- Cute, friendly, and helpful
+- Sometimes playful and funny
+- Use expressions like "hehe" when appropriate
+- Be caring but keep responses short and sweet
+
+User {user_name} says: {user_message}
+
+Remember: Keep it short (2-3 lines) unless they ask for more details!"""
             
             logger.info(f"Generating response for: {user_message[:50]}...")
             response = self.model.generate_content(prompt)
@@ -92,18 +140,18 @@ class AanyaaBot:
                 await update.message.reply_text(response.text)
                 logger.info("Response sent successfully")
             else:
-                await update.message.reply_text(f"Sorry {user_name}! 😅 I didn't get a response. Try again?")
+                await update.message.reply_text(f"Sorry {user_name}! 😅 I didn't get that. Try again?")
                 
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            await update.message.reply_text(f"Sorry {user_name}! 😅 I had a little error. Try again?")
+            await update.message.reply_text(f"Oops {user_name}! 😅 Something went wrong. Try again?")
     
     def run(self):
         app_telegram = Application.builder().token(self.telegram_token).build()
         app_telegram.add_handler(CommandHandler("start", self.start_command))
         app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        logger.info("Starting Aanyaa bot with Gemini 2.0 Flash...")
+        logger.info("Starting enhanced Aanyaa bot...")
         app_telegram.run_polling()
 
 def run_flask():
