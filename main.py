@@ -29,14 +29,15 @@ class AanyaaBot:
             raise ValueError("Missing API keys")
         
         genai.configure(api_key=self.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
-        logger.info("Bot initialized successfully")
+        # Updated to use Gemini 2.0 Flash
+        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        logger.info("Bot initialized successfully with Gemini 2.0 Flash")
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_name = update.effective_user.first_name or "friend"
         await update.message.reply_text(
             f"Hi {user_name}! I'm Aanyaa 🌸\n\n"
-            "I'm your cute AI assistant! Send me any message and I'll respond!\n\n"
+            "I'm your cute AI assistant powered by Gemini 2.0 Flash! Send me any message and I'll respond!\n\n"
             "In groups: Tag me @aanyaa or reply to my messages 💕"
         )
     
@@ -53,7 +54,7 @@ class AanyaaBot:
                 return
         
         try:
-            prompt = f"You are Aanyaa, a cute and friendly AI assistant girl. Be sweet, helpful, and use cute expressions. User {user_name} says: {user_message}"
+            prompt = f"You are Aanyaa, a cute and friendly AI assistant girl. Be sweet, helpful, and use cute expressions like 'hehe' or emojis when appropriate. User {user_name} says: {user_message}"
             response = self.model.generate_content(prompt)
             await update.message.reply_text(response.text)
         except Exception as e:
@@ -65,7 +66,7 @@ class AanyaaBot:
         app_telegram.add_handler(CommandHandler("start", self.start_command))
         app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        logger.info("Starting Aanyaa bot...")
+        logger.info("Starting Aanyaa bot with Gemini 2.0 Flash...")
         app_telegram.run_polling()
 
 def run_flask():
