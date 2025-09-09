@@ -311,7 +311,7 @@ class AanyaaBot:
             
             def sync_call():
                 completion = self.client.chat.completions.create(
-                    model="provider-6/gemini-2.5-flash",
+                    model="provider-3/gemini-2.0-flash",
                     messages=[{"role": "user", "content": prompt}],
                     timeout=30
                 )
