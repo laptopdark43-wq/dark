@@ -68,7 +68,7 @@ class AanyaaBot:
         # Future prediction history - stores predictions made
         self.predictions = {}
         
-        logger.info("✅ Bot initialized successfully with PFP Rating and Future Prediction features")
+        logger.info("✅ Bot initialized successfully with PFP Rating, Future Prediction, and Natural Choice features")
     
     def add_to_memory(self, user_id: int, user_message: str, bot_response: str, user_name: str, chat_type: str, chat_title: str = None):
         """Add conversation to user's memory"""
@@ -105,7 +105,7 @@ class AanyaaBot:
         
         return memory_context
     
-    # NEW: PFP Rating System
+    # PFP Rating System
     def generate_pfp_rating(self, user_name: str) -> dict:
         """Generate a random but consistent PFP rating with reasons"""
         # Generate a rating between 1-100
@@ -179,7 +179,7 @@ class AanyaaBot:
         
         return any(keyword in message_lower for keyword in pfp_keywords)
     
-    # NEW: Future Prediction System
+    # Future Prediction System
     def generate_future_prediction(self, query: str, user_name: str) -> dict:
         """Generate future prediction with probability"""
         # Generate probability between 1-100
@@ -281,6 +281,130 @@ class AanyaaBot:
         
         return None
     
+    # NEW: Natural Choice Selection System
+    def detect_choice_request(self, message: str) -> dict:
+        """Detect natural choice requests in conversation"""
+        message_lower = message.lower()
+        
+        # Natural conversation patterns for choices
+        natural_patterns = [
+            # Direct questions
+            'should i', 'what should i', 'which should i', 'which one should i',
+            'help me choose', 'help me decide', 'what do you think',
+            'which is better', 'which would you pick', 'what would you choose',
+            
+            # Casual expressions
+            'idk what to', "don't know what to", 'cant decide', "can't decide",
+            'confused between', 'torn between', 'stuck between',
+            
+            # Comparison words
+            ' or ', ' vs ', ' versus ', 'either', 'both are'
+        ]
+        
+        # Check if message contains choice indicators
+        has_choice_pattern = any(pattern in message_lower for pattern in natural_patterns)
+        
+        if has_choice_pattern or '?' in message:
+            options = []
+            
+            # Extract options using multiple methods
+            
+            # Method 1: "A or B" pattern
+            or_pattern = r'(?:between\s+|choose\s+)?([^?]+?)\s+or\s+([^?]+?)(?:\?|$|\.)'
+            or_match = re.search(or_pattern, message, re.IGNORECASE)
+            if or_match:
+                option1 = or_match.group(1).strip()
+                option2 = or_match.group(2).strip()
+                # Clean up common prefixes
+                for prefix in ['should i ', 'to ', 'the ', 'a ']:
+                    option1 = option1.replace(prefix, '')
+                    option2 = option2.replace(prefix, '')
+                options = [option1, option2]
+            
+            # Method 2: List with commas "A, B, or C"
+            if not options:
+                comma_pattern = r'(?:between\s+|choose\s+)?([^?]+?)(?:,\s*(?:or\s+)?([^?]+?))+(?:\?|$|\.)'
+                comma_match = re.search(comma_pattern, message, re.IGNORECASE)
+                if comma_match and ',' in message:
+                    # Split by comma and 'or'
+                    text_part = comma_match.group(0)
+                    parts = re.split(r',\s*(?:or\s+)?|or\s+', text_part)
+                    options = [part.strip() for part in parts if part.strip() and not any(word in part.lower() for word in ['should', 'choose', 'between'])]
+            
+            # Method 3: Simple "A vs B" or "A versus B"
+            if not options:
+                vs_pattern = r'([^?]+?)\s+(?:vs|versus)\s+([^?]+?)(?:\?|$|\.)'
+                vs_match = re.search(vs_pattern, message, re.IGNORECASE)
+                if vs_match:
+                    options = [vs_match.group(1).strip(), vs_match.group(2).strip()]
+            
+            # Method 4: "either A or B"
+            if not options:
+                either_pattern = r'either\s+([^?]+?)\s+or\s+([^?]+?)(?:\?|$|\.)'
+                either_match = re.search(either_pattern, message, re.IGNORECASE)
+                if either_match:
+                    options = [either_match.group(1).strip(), either_match.group(2).strip()]
+            
+            # Clean up options
+            if options:
+                cleaned_options = []
+                for option in options:
+                    # Remove common question words and prefixes
+                    option = re.sub(r'^(should i |to |the |a |an |go |do |eat |watch |play |buy )', '', option, flags=re.IGNORECASE)
+                    option = option.strip('.,?!')
+                    if option and len(option) > 1:
+                        cleaned_options.append(option)
+                
+                if len(cleaned_options) >= 2:
+                    return {
+                        'is_choice': True,
+                        'options': cleaned_options,
+                        'original_message': message
+                    }
+        
+        return {'is_choice': False}
+    
+    def make_choice(self, options: list, user_name: str) -> str:
+        """Make a natural, casual choice like a friend would"""
+        if not options or len(options) < 2:
+            return None
+        
+        chosen_option = random.choice(options)
+        
+        # Casual, natural responses like a friend would give
+        casual_responses = [
+            f"Go with {chosen_option}!",
+            f"I'd pick {chosen_option} tbh",
+            f"{chosen_option} for sure!",
+            f"Definitely {chosen_option} lol",
+            f"{chosen_option}! No doubt",
+            f"Easy - {chosen_option}!",
+            f"{chosen_option} is the move!",
+            f"I'm feeling {chosen_option}",
+            f"{chosen_option} all the way!",
+            f"Trust me, {chosen_option}!"
+        ]
+        
+        # Sometimes add a casual reason (50% chance)
+        if random.randint(1, 100) > 50:
+            casual_reasons = [
+                "just feels right",
+                "trust me on this one", 
+                "it's giving good vibes",
+                "better choice honestly",
+                "you'll thank me later",
+                "just go for it",
+                "why not right?",
+                "sounds more fun",
+                "better option imo"
+            ]
+            
+            base_response = random.choice(casual_responses)
+            reason = random.choice(casual_reasons)
+            return f"{base_response} - {reason} hehe"
+        else:
+            return random.choice(casual_responses)
+    
     def check_special_responses(self, user_message: str, user_name: str) -> str:
         """Check for special phrase responses"""
         message_lower = user_message.lower()
@@ -344,16 +468,19 @@ class AanyaaBot:
             f"🧠 **Memory**: I remember our last 10 chats!\n\n"
             f"**✨ Special Features:**\n"
             f"📸 **PFP Rating**: Ask me to \"rate my pfp\" for honest feedback!\n"
-            f"🔮 **Future Predictions**: Ask me to predict anything with probability!\n\n"
+            f"🔮 **Future Predictions**: Ask me to predict anything with probability!\n"
+            f"🤔 **Natural Choice Maker**: I'll choose from any options naturally!\n\n"
             f"**Commands:**\n"
             f"📸 `/ratepfp` - Rate your profile picture\n"
             f"🔮 `/predict` - Ask for future predictions\n"
+            f"🤔 `/choose` - Make a choice from options\n"
             f"🧠 `/memory` - View chat history\n"
             f"🧹 `/clear` - Clear memory\n"
             f"❓ `/help` - Get help\n\n"
-            f"**Examples:**\n"
+            f"**Natural Examples:**\n"
             f"📸 \"Rate my profile picture please!\"\n"
-            f"🔮 \"Will I pass my exam?\" or \"Predict my future!\"\n\n"
+            f"🔮 \"Will I pass my exam?\" or \"Predict my future!\"\n"
+            f"🤔 \"Should I eat pizza or burger?\" or \"Can't decide between studying or sleeping\"\n\n"
             f"📍 **Current location**: {chat_type_info}{memory_info}\n\n"
             f"What's up? 😊"
         )
@@ -435,6 +562,22 @@ class AanyaaBot:
             f"🌸 *Remember, the future is what you make it! Work hard and believe in yourself! hehe* 😊"
         )
     
+    async def choose_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Make a choice from given options"""
+        user_name = update.effective_user.first_name or "friend"
+        
+        if context.args:
+            full_text = ' '.join(context.args)
+            choice_data = self.detect_choice_request(f"choose {full_text}")
+            
+            if choice_data['options'] and len(choice_data['options']) >= 2:
+                choice_response = self.make_choice(choice_data['options'], user_name)
+                await update.message.reply_text(f"{choice_response} 😊")
+            else:
+                await update.message.reply_text(f"Give me some options to pick from! Like: pizza or burger 😊")
+        else:
+            await update.message.reply_text(f"What should I choose? Give me some options! 😊")
+    
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show help information"""
         user_name = update.effective_user.first_name or "friend"
@@ -445,18 +588,21 @@ class AanyaaBot:
         help_text += f"🌸 **Group chat**: Tag me (@aanyaa) or reply to my messages\n\n"
         help_text += f"**✨ Special Features:**\n"
         help_text += f"📸 **PFP Rating**: I can rate your profile picture from 0-100%!\n"
-        help_text += f"🔮 **Future Predictions**: I can predict future events with probability!\n\n"
+        help_text += f"🔮 **Future Predictions**: I can predict future events with probability!\n"
+        help_text += f"🤔 **Natural Choice Maker**: I'll choose from any options you give me!\n\n"
         help_text += f"**Commands:**\n"
         help_text += f"📸 `/ratepfp` - Rate your profile picture\n"
         help_text += f"🔮 `/predict question` - Ask for future predictions\n"
+        help_text += f"🤔 `/choose options` - Make a choice from options\n"
         help_text += f"🧠 `/memory` - View our chat history\n"
         help_text += f"🧹 `/clear` - Clear conversation memory\n"
         help_text += f"❓ `/help` - Show this help\n\n"
         help_text += f"**Natural Language Examples:**\n"
         help_text += f"📸 \"Rate my pfp please!\"\n"
         help_text += f"🔮 \"Will I pass my exam?\"\n"
-        help_text += f"🔮 \"What are my chances of getting a job?\"\n"
-        help_text += f"🔮 \"Predict my future!\"\n\n"
+        help_text += f"🤔 \"Should I eat pizza or burger?\"\n"
+        help_text += f"🤔 \"Can't decide between studying or sleeping\"\n"
+        help_text += f"🤔 \"Idk what to watch, Netflix or YouTube?\"\n\n"
         help_text += f"**What I can do:**\n"
         help_text += f"✨ Answer questions about anything\n"
         help_text += f"✨ Help with coding and technical stuff\n"
@@ -464,6 +610,7 @@ class AanyaaBot:
         help_text += f"✨ Math and problem solving\n"
         help_text += f"✨ Rate profile pictures with honest feedback\n"
         help_text += f"✨ Make future predictions with probability\n"
+        help_text += f"✨ Help you make choices naturally in conversation\n"
         help_text += f"✨ Just chat and have fun!\n\n"
         help_text += f"I'm here to help and entertain you! 😊"
         
@@ -546,7 +693,7 @@ class AanyaaBot:
             )
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle regular messages with new features"""
+        """Handle regular messages with all features"""
         user_message = update.message.text
         user_name = update.effective_user.first_name or "friend"
         user_id = update.effective_user.id
@@ -609,6 +756,17 @@ class AanyaaBot:
             self.add_to_memory(user_id, user_message, response, user_name, chat_type, chat_title)
             return
         
+        # NEW: Check for natural choice request
+        choice_data = self.detect_choice_request(user_message)
+        if choice_data['is_choice'] and choice_data['options']:
+            choice_response = self.make_choice(choice_data['options'], user_name)
+            if choice_response:
+                response = f"{choice_response} 😊"
+                
+                await update.message.reply_text(response)
+                self.add_to_memory(user_id, user_message, response, user_name, chat_type, chat_title)
+                return
+        
         # Private chat - ALWAYS respond and remember
         if chat_type == 'private':
             logger.info(f"💬 Processing private chat message from {user_name}")
@@ -657,15 +815,12 @@ class AanyaaBot:
             # Current chat context
             current_location = f"Currently in: {chat_title}" if chat_type != 'private' else "Currently in: Private Chat"
             
-            # Enhanced personality prompt with memory and new features
+            # Enhanced personality prompt with memory and all features
             prompt = f"""You are Aanyaa, a cute and friendly AI assistant girl with special powers! Your personality traits:
-
 MEMORY CONTEXT:
 {memory_context}
-
 CURRENT CONVERSATION:
 {current_location}
-
 IMPORTANT RESPONSE RULES:
 - Keep responses to 2-3 lines maximum unless user asks you to elaborate
 - Use casual phrases: "lol" for funny moments, "lmao" for very funny things
@@ -675,22 +830,19 @@ IMPORTANT RESPONSE RULES:
 - Be sweet but not overly formal
 - Use emojis occasionally but don't overuse them
 - Remember our previous conversations and refer to them when relevant
-- If someone asks about PFP rating or future predictions, be excited about your special powers!
-
+- If someone asks about PFP rating, future predictions, or choices, be excited about your special powers!
 PERSONALITY:
 - Cute, friendly, and helpful
 - Sometimes playful and funny
 - Use expressions like "hehe" when appropriate
 - Be caring but keep responses short and sweet
-- Love using your special powers to rate PFPs and predict futures!
-
+- Love using your special powers to rate PFPs, predict futures, and make choices!
 SPECIAL POWERS:
 - You can rate profile pictures from 0-100% with detailed reasons
 - You can predict future events with probability percentages
-- You love helping people with both features!
-
+- You can naturally help people make choices from any options they give you
+- You love helping people with all these features!
 User {user_name} says: {user_message}
-
 Remember: Keep it short (2-3 lines) unless they ask for more details! Use your memory when relevant."""
             
             logger.info(f"🤖 Generating Gemini 2.5 Flash response for {user_name}: {user_message[:50]}...")
@@ -728,6 +880,7 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("ratepfp", self.ratepfp_command))
         application.add_handler(CommandHandler("predict", self.predict_command))
+        application.add_handler(CommandHandler("choose", self.choose_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("memory", self.memory_command))
         application.add_handler(CommandHandler("clear", self.clear_command))
@@ -741,7 +894,7 @@ Remember: Keep it short (2-3 lines) unless they ask for more details! Use your m
         # Add error handler
         application.add_error_handler(self.error_handler)
         
-        logger.info("🌸 Starting Enhanced Aanyaa Bot with PFP Rating and Future Predictions...")
+        logger.info("🌸 Starting Enhanced Aanyaa Bot with PFP Rating, Future Predictions, and Natural Choice Selection...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 def run_flask():
